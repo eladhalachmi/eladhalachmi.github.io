@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft JS - Infinite World</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; background-color: #87ceeb; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+            transform: translate(-50%, -50%); pointer-events: none; z-index: 10;
+        }
+        #ui-container {
+            position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 10px; background: rgba(0, 0, 0, 0.6); padding: 10px;
+            border-radius: 10px; pointer-events: auto; z-index: 200;
+        }
+        .slot {
+            width: 60px; height: 60px; border: 2px solid #555;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: white; font-size: 10px; background: rgba(255,255,255,0.1);
+            position: relative; cursor: grab;
+        }
+        .slot.active { border-color: #fff; background: rgba(255, 255, 255, 0.3); }
+        .slot b { font-size: 14px; pointer-events: none; }
+        
+        #mining-progress-container {
+            position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
+            width: 200px; height: 20px; background: rgba(0,0,0,0.5); border: 2px solid white;
+            display: none; z-index: 1000;
+        }
+        #mining-progress-bar { width: 0%; height: 100%; background: #4caf50; }
+
+        #crafting-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: none; align-items: center;
+            justify-content: center; z-index: 100; color: white;
+        }
+        .crafting-grid { display: grid; gap: 5px; margin-right: 20px; }
+        .craft-slot { 
+            width: 70px; height: 70px; background: #333; border: 2px solid #666; 
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            font-size: 11px; font-weight: bold; position: relative; text-align: center;
+            color: #eee;
+        }
+        #instructions {
+            position: absolute; top: 10px; right: 10px; color: white;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; direction: rtl; font-size: 13px;
+        }
+        #game-info {
+            position: absolute; top: 10px; left: 10px; color: white;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; direction: rtl;
+        }
+        .icon { border-radius: 4px; pointer-events: none; }
+        #death-screen {
+            position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(139,0,0,0.8);
+            display: none; flex-direction: column; align-items: center; justify-content: center;
+            color: white; z-index: 2000; font-size: 40px; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="death-screen">
+        <div>מתת!</div>
+        <button onclick="respawn()" style="margin-top:20px; padding:15px 30px; font-size:20px; cursor:pointer;">חזור לחיים</button>
+    </div>
+
+    <div id="instructions">
+        W,A,S,D - תנועה | Space - קפיצה<br>
+        <b>קליק שמאלי</b> - חציבה | <b>קליק ימני</b> - בנייה<br>
+        T - פתיחת קראפטינג | 1-5 - בחירת כלי
+    </div>
+
+    <div id="game-info">
+        זמן: <span id="time-display">בוקר</span><br>
+        עולם אינסופי! לך קדימה כדי לגלות עוד.
+    </div>
+
+    <div id="mining-progress-container">
+        <div id="mining-progress-bar"></div>
+    </div>
+
+    <svg id="crosshair" viewBox="0 0 24 24">
+        <line x1="12" y1="8" x2="12" y2="16" stroke="white" stroke-width="2"/>
+        <line x1="8" y1="12" x2="16" y2="12" stroke="white" stroke-width="2"/>
+    </svg>
+
+    <div id="crafting-overlay">
+        <div style="text-align: center;">
+            <h2 id="crafting-title">שולחן עבודה (3x3)</h2>
+            <div style="display: flex; align-items: center; justify-content: center;">
+                <div id="grid-container" class="crafting-grid"></div>
+                <div style="font-size: 30px; margin: 0 20px;">➡</div>
+                <div class="result-container">
+                    <div id="result-slot" class="craft-slot" style="border-color: gold; width: 80px; height: 80px; flex-direction: column;"></div>
+                    <div style="color: gold; margin-top: 5px; font-weight: bold;">ייצור</div>
+                </div>
+            </div>
+            <button onclick="toggleCrafting()" style="margin-top: 15px; padding: 10px 20px; cursor: pointer; background: #c0392b; color: white; border: none; border-radius: 4px; font-weight: bold;">סגור (Esc)</button>
+        </div>
+    </div>
+
+    <div id="ui-container">
+        <div class="slot active" id="slot0" draggable="true" ondragstart="handleDragStart(event, 'inventory', 0)" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'inventory', 0)"><div class="icon"></div><b id="inv-count-0"></b></div>
+        <div class="slot" id="slot1" draggable="true" ondragstart="handleDragStart(event, 'inventory', 1)" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'inventory', 1)"><div class="icon"></div><b id="inv-count-1"></b></div>
+        <div class="slot" id="slot2" draggable="true" ondragstart="handleDragStart(event, 'inventory', 2)" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'inventory', 2)"><div class="icon"></div><b id="inv-count-2"></b></div>
+        <div class="slot" id="slot3" draggable="true" ondragstart="handleDragStart(event, 'inventory', 3)" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'inventory', 3)"><div class="icon"></div><b id="inv-count-3"></b></div>
+        <div class="slot" id="slot4" draggable="true" ondragstart="handleDragStart(event, 'inventory', 4)" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'inventory', 4)"><div class="icon"></div><b id="inv-count-4"></b></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        const ITEMS = {
+            'grass': { name: 'דשא', color: 0x4caf50, hardness: 0.5 },
+            'dirt': { name: 'אדמה', color: 0x8b4513, hardness: 0.5 },
+            'stone': { name: 'אבן', color: 0x808080, hardness: 5.0, needsPick: 'wooden_pickaxe' },
+            'iron_ore': { name: 'ברזל', color: 0xffdbbb, hardness: 8.0, needsPick: 'stone_pickaxe' },
+            'log': { name: 'עץ', color: 0x5d4037, hardness: 1.0 },
+            'plank': { name: 'קרשים', color: 0xb38659 },
+            'stick': { name: 'מקל', color: 0x795548, isNotBlock: true },
+            'crafting_table': { name: 'שולחן', color: 0xffcc80 },
+            'wooden_pickaxe': { name: 'מכוש עץ', color: 0xdeb887, isTool: true, tier: 1, isNotBlock: true },
+            'stone_pickaxe': { name: 'מכוש אבן', color: 0x777777, isTool: true, tier: 2, isNotBlock: true },
+            'iron_pickaxe': { name: 'מכוש ברזל', color: 0xecf0f1, isTool: true, tier: 3, isNotBlock: true },
+            'leaves': { name: 'עלים', color: 0x2e7d32, hardness: 0.2, noDrop: true }
+        };
+
+        let inventorySlots = [null, null, null, null, null];
+        let activeSlotIndex = 0;
+        let isCraftingOpen = false;
+        let isDead = false;
+        let currentCraftingSize = 2;
+        let craftingInput = [];
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87ceeb);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        sunLight.position.set(10, 20, 10);
+        scene.add(sunLight);
+
+        const blocks = [];
+        const chunkMap = new Set(); // שומר אילו מיקומים כבר נוצרו
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+
+        function createBlock(x, y, z, itemType) {
+            const key = `${Math.round(x)},${Math.round(y)},${Math.round(z)}`;
+            const material = new THREE.MeshLambertMaterial({ color: ITEMS[itemType].color });
+            const block = new THREE.Mesh(geometry, material);
+            block.position.set(Math.round(x), Math.round(y), Math.round(z));
+            block.userData.itemType = itemType;
+            scene.add(block);
+            blocks.push(block);
+            return block;
+        }
+
+        // פונקציה ליצירת "צ'אנק" סביב נקודה
+        function generateChunk(playerX, playerZ) {
+            const range = 12; // רדיוס יצירה
+            const startX = Math.floor(playerX) - range;
+            const endX = Math.floor(playerX) + range;
+            const startZ = Math.floor(playerZ) - range;
+            const endZ = Math.floor(playerZ) + range;
+
+            for (let x = startX; x <= endX; x++) {
+                for (let z = startZ; z <= endZ; z++) {
+                    const columnKey = `${x},${z}`;
+                    if (chunkMap.has(columnKey)) continue;
+                    chunkMap.add(columnKey);
+
+                    // יצירת עמוד בלוקים
+                    createBlock(x, 0, z, 'grass');
+                    createBlock(x, -1, z, 'dirt');
+                    createBlock(x, -2, z, 'dirt');
+                    
+                    for (let y = -3; y >= -6; y--) {
+                        let type = 'stone';
+                        if (y < -4 && Math.random() < 0.05) type = 'iron_ore';
+                        createBlock(x, y, z, type);
+                    }
+
+                    // יצירת עצים אקראיים
+                    if (Math.random() < 0.02) {
+                        for(let i=1; i<=3; i++) createBlock(x, i, z, 'log');
+                        for(let lx=-1; lx<=1; lx++) 
+                            for(let lz=-1; lz<=1; lz++) 
+                                createBlock(x+lx, 4, z+lz, 'leaves');
+                    }
+                }
+            }
+        }
+
+        camera.position.set(0, 5, 0);
+        generateChunk(0, 0); // התחלה
+
+        function die() {
+            if (isDead) return;
+            isDead = true;
+            document.getElementById('death-screen').style.display = 'flex';
+            document.exitPointerLock();
+        }
+
+        function respawn() {
+            isDead = false;
+            camera.position.set(0, 5, 0);
+            document.getElementById('death-screen').style.display = 'none';
+            renderer.domElement.requestPointerLock();
+        }
+
+        function allowDrop(e) { e.preventDefault(); }
+        function handleDragStart(e, source, index) {
+            let item = source === 'inventory' ? inventorySlots[index] : { type: craftingInput[index], count: 1 };
+            if (!item || (source === 'crafting' && !item.type)) return e.preventDefault();
+            e.dataTransfer.setData("source", source);
+            e.dataTransfer.setData("index", index);
+        }
+
+        function handleDrop(e, target, targetIdx) {
+            e.preventDefault();
+            const source = e.dataTransfer.getData("source");
+            const sourceIdx = parseInt(e.dataTransfer.getData("index"));
+            if (source === 'inventory' && target === 'crafting') {
+                if (inventorySlots[sourceIdx]) {
+                    craftingInput[targetIdx] = inventorySlots[sourceIdx].type;
+                    inventorySlots[sourceIdx].count--;
+                    if (inventorySlots[sourceIdx].count <= 0) inventorySlots[sourceIdx] = null;
+                }
+            } else if (source === 'crafting' && target === 'inventory') {
+                const type = craftingInput[sourceIdx];
+                if (type) { addToInventory(type, 1); craftingInput[sourceIdx] = null; }
+            }
+            updateUI(); updateCraftingDisplay();
+        }
+
+        function addToInventory(itemType, amount = 1) {
+            if (ITEMS[itemType].noDrop) return;
+            for (let s of inventorySlots) { if (s && s.type === itemType) { s.count += amount; updateUI(); return; } }
+            for (let i = 0; i < 5; i++) { if (!inventorySlots[i]) { inventorySlots[i] = { type: itemType, count: amount }; updateUI(); return; } }
+        }
+
+        function updateUI() {
+            inventorySlots.forEach((slot, i) => {
+                const slotEl = document.getElementById(`slot${i}`);
+                const countEl = document.getElementById(`inv-count-${i}`);
+                const iconEl = slotEl.querySelector('.icon');
+                slotEl.classList.toggle('active', i === activeSlotIndex);
+                if (slot && slot.count > 0) {
+                    countEl.innerText = slot.count;
+                    iconEl.style.width = '30px'; iconEl.style.height = '30px';
+                    iconEl.style.backgroundColor = `#${ITEMS[slot.type].color.toString(16).padStart(6, '0')}`;
+                } else {
+                    countEl.innerText = ''; iconEl.style.backgroundColor = 'transparent';
+                }
+            });
+        }
+
+        function toggleCrafting(size = 2) {
+            isCraftingOpen = !isCraftingOpen;
+            document.getElementById('crafting-overlay').style.display = isCraftingOpen ? 'flex' : 'none';
+            if (isCraftingOpen) { currentCraftingSize = size; setupCraftingGrid(); document.exitPointerLock(); }
+            else { renderer.domElement.requestPointerLock(); }
+        }
+
+        function setupCraftingGrid() {
+            const container = document.getElementById('grid-container');
+            container.innerHTML = '';
+            container.style.gridTemplateColumns = `repeat(${currentCraftingSize}, 70px)`;
+            craftingInput = Array(currentCraftingSize * currentCraftingSize).fill(null);
+            for (let i = 0; i < craftingInput.length; i++) {
+                const div = document.createElement('div');
+                div.className = 'craft-slot';
+                div.draggable = true;
+                div.ondragstart = (e) => handleDragStart(e, 'crafting', i);
+                div.ondragover = (e) => allowDrop(e);
+                div.ondrop = (e) => handleDrop(e, 'crafting', i);
+                container.appendChild(div);
+            }
+            updateCraftingDisplay();
+        }
+
+        function updateCraftingDisplay() {
+            const slots = document.querySelectorAll('#grid-container .craft-slot');
+            craftingInput.forEach((item, i) => {
+                slots[i].style.backgroundColor = item ? `#${ITEMS[item].color.toString(16).padStart(6, '0')}` : '#333';
+                slots[i].innerText = item ? ITEMS[item].name : '';
+            });
+            const result = checkRecipe();
+            const resSlot = document.getElementById('result-slot');
+            if (result) {
+                resSlot.style.backgroundColor = `#${ITEMS[result.type].color.toString(16).padStart(6, '0')}`;
+                resSlot.innerHTML = `<div style='font-size:10px'>${ITEMS[result.type].name}</div><b>${result.count}</b>`;
+                resSlot.onclick = () => { addToInventory(result.type, result.count); craftingInput.fill(null); updateCraftingDisplay(); };
+            } else { resSlot.style.backgroundColor = '#444'; resSlot.innerHTML = ''; }
+        }
+
+        function checkRecipe() {
+            const used = craftingInput.filter(x => x !== null);
+            if (used.length === 1 && used[0] === 'log') return { type: 'plank', count: 4 };
+            if (currentCraftingSize === 2 && used.length === 4 && used.every(x => x === 'plank')) return { type: 'crafting_table', count: 1 };
+            if (currentCraftingSize === 3 && used.length === 5) {
+                const isHandle = craftingInput[4] === 'stick' && craftingInput[7] === 'stick';
+                if (isHandle && craftingInput[0] === 'stone') return { type: 'stone_pickaxe', count: 1 };
+                if (isHandle && craftingInput[0] === 'plank') return { type: 'wooden_pickaxe', count: 1 };
+            }
+            return null;
+        }
+
+        const raycaster = new THREE.Raycaster();
+        let miningTarget = null, miningTime = 0, isMining = false;
+
+        window.addEventListener('mousedown', (e) => { 
+            if (isCraftingOpen || isDead) return;
+            if (e.button === 0) isMining = true;
+            if (e.button === 2) handleBuild();
+        });
+
+        window.addEventListener('mouseup', () => { isMining = false; miningTime = 0; document.getElementById('mining-progress-container').style.display = 'none'; });
+
+        function handleBuild() {
+            const activeItem = inventorySlots[activeSlotIndex];
+            if (!activeItem || activeItem.count <= 0 || ITEMS[activeItem.type].isNotBlock) return;
+            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+            const intersects = raycaster.intersectObjects(blocks);
+            if (intersects.length > 0) {
+                const pos = intersects[0].object.position.clone().add(intersects[0].face.normal);
+                createBlock(pos.x, pos.y, pos.z, activeItem.type);
+                activeItem.count--; updateUI();
+            }
+        }
+
+        function handleMining() {
+            if (!isMining) return;
+            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+            const intersects = raycaster.intersectObjects(blocks);
+            if (intersects.length > 0) {
+                const target = intersects[0].object;
+                if (miningTarget !== target) { miningTarget = target; miningTime = 0; }
+                const type = target.userData.itemType;
+                const info = ITEMS[type];
+                let speed = 0.05;
+                const activeItem = inventorySlots[activeSlotIndex];
+                
+                let canHarvest = !info.needsPick;
+                if (activeItem && ITEMS[activeItem.type].isTool) {
+                    speed *= (ITEMS[activeItem.type].tier * 2);
+                    if (info.needsPick === 'wooden_pickaxe' && ITEMS[activeItem.type].tier >= 1) canHarvest = true;
+                    if (info.needsPick === 'stone_pickaxe' && ITEMS[activeItem.type].tier >= 2) canHarvest = true;
+                }
+
+                miningTime += speed;
+                const progress = (miningTime / info.hardness) * 100;
+                document.getElementById('mining-progress-container').style.display = 'block';
+                document.getElementById('mining-progress-bar').style.width = Math.min(progress, 100) + '%';
+                if (progress >= 100) {
+                    if (canHarvest) addToInventory(type);
+                    scene.remove(target); blocks.splice(blocks.indexOf(target), 1);
+                    isMining = false;
+                }
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (isDead) return;
+            if (e.code === 'KeyT') {
+                raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+                const intersects = raycaster.intersectObjects(blocks);
+                const isTable = intersects.length > 0 && intersects[0].object.userData.itemType === 'crafting_table';
+                toggleCrafting(isTable ? 3 : 2);
+            }
+            if (e.key >= '1' && e.key <= '5') { activeSlotIndex = parseInt(e.key)-1; updateUI(); }
+            if (e.code === 'Space' && velocityY === 0) velocityY = 0.13;
+        });
+
+        let velocityY = 0;
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        let yaw = 0, pitch = 0;
+        document.addEventListener('mousemove', (e) => {
+            if (document.pointerLockElement === renderer.domElement && !isCraftingOpen && !isDead) {
+                yaw -= e.movementX * 0.002; pitch -= e.movementY * 0.002;
+                pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+                camera.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            }
+        });
+
+        renderer.domElement.addEventListener('click', () => { if (!isCraftingOpen && !isDead) renderer.domElement.requestPointerLock(); });
+
+        let frameCount = 0;
+        function animate() {
+            requestAnimationFrame(animate);
+            if (!isDead) {
+                if (document.pointerLockElement === renderer.domElement && !isCraftingOpen) {
+                    handleMining();
+                    const moveSpeed = 0.1;
+                    const q = camera.quaternion;
+                    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(q); forward.y = 0; forward.normalize();
+                    const right = new THREE.Vector3(1,0,0).applyQuaternion(q); right.y = 0; right.normalize();
+                    if (keys['KeyW']) camera.position.addScaledVector(forward, moveSpeed);
+                    if (keys['KeyS']) camera.position.addScaledVector(forward, -moveSpeed);
+                    if (keys['KeyA']) camera.position.addScaledVector(right, -moveSpeed);
+                    if (keys['KeyD']) camera.position.addScaledVector(right, moveSpeed);
+                    
+                    velocityY -= 0.01; camera.position.y += velocityY;
+                    
+                    // בדיקת צ'אנקים חדשים כל 10 פריימים
+                    frameCount++;
+                    if (frameCount % 10 === 0) {
+                        generateChunk(camera.position.x, camera.position.z);
+                    }
+
+                    if (camera.position.y < 2.1) {
+                        let onBlock = false;
+                        for(let b of blocks) {
+                            if (Math.abs(b.position.x - camera.position.x) < 0.6 && 
+                                Math.abs(b.position.z - camera.position.z) < 0.6 &&
+                                camera.position.y - b.position.y < 2.2 && camera.position.y > b.position.y) {
+                                camera.position.y = b.position.y + 2.1;
+                                velocityY = 0; onBlock = true; break;
+                            }
+                        }
+                        if (!onBlock && camera.position.y < -15) die();
+                    }
+                }
+            }
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
+
